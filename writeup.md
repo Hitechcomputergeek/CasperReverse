@@ -1,6 +1,6 @@
-#Casper API Reverse Engineering
+# Casper API Reverse Engineering
 
-#Table of Contents
+## Table of Contents
 * [Background](#background)
 * [Package Capture](#where-to-start)
 * [Java Decompiling](#now-what)
@@ -17,11 +17,11 @@
 * [Duplicating the Signing](#tying-it-all-together)
 
 
-#Some Background
+## Some Background
 
 If you don't care about this and just want to get to the reversing click [here](#where-to-start).
 
-Snapchat is one of the most popular social media platforms available right now. Until a few years ago, their private API was also one of the least secure. It was trivial to reverse engineer and there were several people who did it successfully, most notably tlack with [SnapHax] (https://github.com/tlack/snaphax). Snapchat initially retaliated with legal action, [threatening ](https://news.ycombinator.com/item?id=6083812) to sue tlack for his usage of the API (under [DMCA 1201](https://www.law.cornell.edu/uscode/text/17/1201)). It appears nothing ever came of the lawsuit, but Snapchat did eventually update their security. 
+Snapchat is one of the most popular social media platforms available right now. Until a few years ago, their private API was also one of the least secure. It was trivial to reverse engineer and there were several people who did it successfully, most notably tlack with [SnapHax](https://github.com/tlack/snaphax). Snapchat initially retaliated with legal action, [threatening ](https://news.ycombinator.com/item?id=6083812) to sue tlack for his usage of the API (under [DMCA 1201](https://www.law.cornell.edu/uscode/text/17/1201)). It appears nothing ever came of the lawsuit, but Snapchat did eventually update their security. 
 
 After Snapchat's security update their API apparently became much more difficult to reverse. The number of working 3rd party apps plumetted due to their increased security. In May of 2015 the first version of [Casper](https://casper.io) was released. This gave a new option to those who were frustrated with the standard Snapchat client and wanted more features. The developer of Casper, [Liam Cottle](liamcottle.com) decided to keep his findings about the reversing of Snapchat to himself. Considering Snapchat's past reactions to 3rd party applications this is reasonable. 
 
@@ -40,7 +40,7 @@ These prices seem outrageous! For a small development team, or someone who just 
 
 The Casper app produced by Liam still provides its users with free access to his API, so there must be some means to reverse engineer this and gain access for another app. 
 
-#Where to Start?
+## Where to Start?
 As with most any network API, the first step is to monitor network traffic. So using Burp Suite I started up the proxy and installed its CA cert onto my Android phone, then just started using Casper. Here is a sample login request to Casper (with username/password and API Key changed)
 
 Login Request
@@ -85,7 +85,7 @@ Content-Length: 1561
 
 As you can see, this request goes to Liam's server and returns a JSON which contains the headers and parameters to send to Snapchat's servers to perform a login. Each time this request is performed the `X-Casper-Timestamp`, `X-Casper-Signature`, and `X-Casper-Private-Token` headers change value. The timestamp header is obvious, but the other two are more interesting. As you continue to navigate through the app, there are several other requests performed, but only one other seems to relate to Snapchat `/ios/snapchat/endpointauth`, the rest seem to be Casper internal. This request also contains the verification headers. Simply trying to re-submit these requests with a different username/password fails and Liam's server threatens to have your account "permenantly banned".
 
-#Now What?
+## Now What?
 Since simply inspecting the network traffic doesn't yield any obvious ways around the verification, the next step must be to decompile his APK. So hop on over to [casper.io](https://casper.io) and download it. Then extract the files from it (APKs are just ZIPs) and you'll get a file called `classes.dex`. This is how Android stores its Java class files. The best tool for accessing these is [dex2jar](https://github.com/pxb1988/dex2jar) by pxb1988. Running `d2j-dex2jar.sh classes.dex` will give you a file called `classes-dex2jar.jar` which can be opened by a standard Java decompiler, my personal choice is [jd-gui] (http://jd.benow.ca/). 
 
 At a glance it's clear to see that nearly all of the files within the `io.casper.android` package are obfuscated, this complicates things a little bit. However, with a little more investigation it's clear there are a few exceptions to this rule, most notably `io.casper.android.security.Security`. This class has several obfuscated methods within it which make calls to the 2 native methods included. These native methods are `String getSecretKey()` and `String getVerificationToken(Context, String)`. Well that's certaintly  something interesting! 
@@ -94,7 +94,7 @@ The 2 methods which call them are `String a(TreeMap<String, String>)` which call
 
 Reading through `makeSecret` makes it fairly clear what it does. Here is `makeSecret` reproduced and what it does
 
-###Original
+### Original
 ```java
   public static String a(TreeMap<String, String> paramTreeMap)
   {
@@ -123,7 +123,7 @@ Reading through `makeSecret` makes it fairly clear what it does. Here is `makeSe
     }
   }
 ``` 
-###Rewritten
+### Rewritten
 ```java 
 	public static String makeSecret(TreeMap<String, String> map)
 	{
@@ -146,7 +146,7 @@ Reading through `makeSecret` makes it fairly clear what it does. Here is `makeSe
 The most interesting part of this to me is the String `"v1:"`. This is part of the headers which are sent to Casper in requests! This method is clearly somehow related to the verification headers.
 
 Looking at the other method makes some more things clear 
-###Original
+### Original
 ```java
   public static String a(Context paramContext, String paramString1, String paramString2, TreeMap<String, String> paramTreeMap)
   {
@@ -178,7 +178,7 @@ Looking at the other method makes some more things clear
     }
   }
 ```
-###Rewritten
+### Rewritten
 ```java
 	public static String makeVerification(Context context, String s1, String s2, TreeMap<String,String> map)
 	{
@@ -200,7 +200,7 @@ Looking at the other method makes some more things clear
 
 This method has a very similar structure to `makeSecret`! The only differences are the inclusion of the `verificationToken` and the addition of `s1` to the front of `entries`. It also identifes the other verification header! Since this method uses `"v1:"` as well, but it also includes a second `":"` within the string. This must be the method to get the `X-Casper-Signature` header and the other must get the `X-Casper-Private-Token` header! From now on I'll call `makeSecret` `getSignature()` and `makeVerification` `getPrivateToken`.
 
-#What's the use?
+## What's the use?
 So we have these native methods, but we don't know what arguments are passed to them or what the `getSecretKey` or `getVerificationToken` methods actually do. The next step is to see where the `Security.a` methods are called from in case that provides some more details about the mystery parameters. Thankfully, the `Security` class is only referenced in one other class `io.casper.c.b.a.a.a`. With some investigation into this class it can be seen that it helps handle Requests to the Casper API (based on the import of `okhttp` and the string `"User-Agent"`). 
 
 Reading through this class, the method `f()` seems to be the one calling the Security methods. In a stroke of luck, jd-gui was able to identify these parameters' values and provide information about them. Here is the code from the class
@@ -236,7 +236,7 @@ String getSignature(TreeMap<String,String> formParameters);
 String getPrivateToken(Context context, String path, String timestamp, TreeMap<String,String> formParameters);
 ```
 
-#But what about the native methods?
+## But what about the native methods?
 //TODO Consider a part 2... this is already long
 
 With the full knowledge of how the two `Security` methods are called, the only thing remaining is the function of the native methods `getSecretKey` and `getVerificationToken`. These methods are frontends for native library methods which lie within the library `security`. Within the extracted APK there are several files within the path `/lib/`. I chose to use the one in `x86` for decompiling.
@@ -253,11 +253,11 @@ Address | String
 1614 | getMD5Hash
 169e | getPackageName
 
-The first entry definitely looks like some sort of key, maybe this is what is returned by `getSecretKey`. The second entry seems to be a format string for `printf` or `sprintf` (since it's unlikely this is printing to a console. The last 3 entries are results of the JNI integration: `CryptoUtil` is a class in casper and `getMD5Hash` is one of its methods, `getPackageName` is an Android method which simply returns the name of the package of the APK. 
+The first entry definitely looks like some sort of key, maybe this is what is returned by `getSecretKey`. The second entry seems to be a format string for `printf` or `sprintf` (since it's unlikely this is printing to a console). The last 3 entries are results of the JNI integration: `CryptoUtil` is a class in casper and `getMD5Hash` is one of its methods, `getPackageName` is an Android method which simply returns the name of the package of the APK. 
 
 So now with some possible leads from `strings` we can start in on the decompile. There are several great tools that could be used to decompile this, but by far the most powerful is [IDA](https://www.hex-rays.com/index.shtml). The license for IDA runs about $500, but Hex-Rays offers a very full featured [freeware version](https://www.hex-rays.com/products/ida/support/download_freeware.shtml) and a [demo version](https://www.hex-rays.com/products/ida/support/download_demo.shtml). Either free download will be sufficient for decompiling this library. 
 
-##getSecretKey
+## getSecretKey
 Here is the disassembly of [`getSecretKey`](https://github.com/casperreverser/CasperReverse/blob/master/disassembly.asm#L2)
 
 Opening `libsecurity.so` in IDA presents us with a somewhat intimidating interface, but with a little use it becomes pretty intuitive. In the Functions window it lists several standard library functions, several unnamed subroutines, and 2 functions with very familiar names `Java_io_casper_android_security_Security_getSecretKey` and `Java_io_casper_io_android_security_Security_getVerificationToken`. Double-clicking on one of these will navigate us to it within the decompiled view. You can find the full decompiled program [here](https://www.github.com/casperreverser/CasperReverse/disassembly.asm) if you want to follow along.
@@ -378,7 +378,7 @@ So this calls the function `NewStringUTF(env, dest)`, making a new `jstring` fro
 
 In other words `getSecretKey` just returns the string `c789742f186a167dd73e59b1ce3d4873`!
 
-##getVerificationToken
+## getVerificationToken
 Here is the disassembly of [`getVerificationToken`](https://github.com/casperreverser/CasperReverse/blob/master/disassembly.asm#L68)
 
 I guess it could be said I've saved the best for last... this one is a doozy, but once you break it down it's not too bad at all. I've linked to the dumped assembly of `getVerificationToken`, it might help to glance at it quickly.
@@ -387,7 +387,7 @@ Those reading closely will notice that this calls several subroutines in its exe
 
 In order to understand this function on the whole, you'll need to understand these subroutines, so that's where we'll start.
 
-###sub_9B0
+### sub_9B0
 Here is the disassembly of [`sub_9B0`](https://github.com/casperreverser/CasperReverse/blob/master/disassembly.asm#L495)
 
 So there's quite a lot here, but it actually breaks down fairly easily. At a glance you may notice there are a lot of structures which look like the JNI calls from above. The good news about this is we know it's fairly easy to deconstruct these JNI calls by using the index in their function table.
@@ -467,7 +467,7 @@ void* sub_740(JNIEnv* env, jobject s){
 
 So `sub_740` is actually defined as something like `char* getBytes(JNIEnv* env, jString s)`
 
-###sub_CA0
+### sub_CA0
 Here is the disassembly of [`sub_CA0`](https://github.com/casperreverser/CasperReverse/blob/master/disassembly.asm#L716)
 
 Only 2 more functions to go! 
@@ -515,7 +515,7 @@ void* sub_ca0(JNIEnv* env, jobject context){
 So `sub_CA0` returns the android package's signature. Its signature could be rewritten as `jstring getSignature(env, context)`.
 
 
-###sub_13C0
+### sub_13C0
 Here is the disassembly for [`sub_13C0`](https://github.com/casperreverser/CasperReverse/blob/master/disassembly.asm#L1208)
 
 Alright, last one, it's not too bad. Once again, I'll just rewrite it in C
@@ -537,7 +537,7 @@ void * sub_13c0(JNIEnv* env, char* s){
 ```
 So this function simply calculates the md5 of the string passed. It's signature would be `char* getMD5(JNIEnv* env, char* s);`
 
-###Back to getVerificationToken
+### Back to getVerificationToken
 Here is the disassembly of [`getVerificationToken`](https://github.com/casperreverser/CasperReverse/blob/master/disassembly.asm#L68)
 
 Now that we have the subroutines translated into C we can start workign on `getVerificationToken`. I've included a table of the subroutines to their C signatures
